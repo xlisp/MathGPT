@@ -1,7 +1,7 @@
 # MathGPT
 
-基于 [nanochat](../nanochat) 框架构建的数学推理助手。
-使用 REINFORCE 强化学习（简化版 GRPO）在 GSM8K 小学数学题数据集上训练 GPT 模型，使其能逐步解题。
+自包含的数学推理助手，从零预训练 → SFT 对话微调 → REINFORCE 强化学习（简化版 GRPO）在 GSM8K 数学题上训练。
+nanochat 核心代码已内嵌到本项目，无需外部依赖。
 
 ## 运行环境
 
@@ -12,29 +12,70 @@
 | GPU | NVIDIA GeForce GTX 1080（8GB VRAM，SM 6.1） |
 | 精度 | float32（GTX 1080 不支持 bfloat16） |
 
-> **兼容性说明**：nanochat 原本需要 PyTorch ≥ 2.5，本项目已对以下问题打补丁：
-> - `F.rms_norm`（PyTorch 2.4+ 才有）→ 手动实现
-> - `torch.compile`（Python 3.12 + PyTorch 2.3 不支持 Dynamo）→ 替换为恒等操作
-> - `F.scaled_dot_product_attention(enable_gqa=...)`（PyTorch 2.5+ 才有）→ 用 `repeat_interleave` 手动展开
+> **兼容性说明**：原始 nanochat 需要 PyTorch ≥ 2.5，本项目已直接在源码中修复：
+> - `F.rms_norm`（PyTorch 2.4+ 才有）→ 手动实现方差归一化
+> - `torch.compile`（Python 3.12 + PyTorch 2.3 不支持 Dynamo）→ 运行时检测，替换为恒等操作
+> - `F.scaled_dot_product_attention(enable_gqa=...)`（PyTorch 2.5+ 才有）→ 用 `repeat_interleave` 手动展开 KV 头
+> - 优化器中 0-D CPU 张量无法 `lerp_` 到 CUDA 张量 → 添加 `.to(dev)`
 
 ## 项目结构
 
 ```
-nanochat/                    ← 基础框架（GPT 模型、分词器、训练工具）
 MathGPT/
-├── math_gpt/
-│   ├── compat.py            ← PyTorch 2.3 / Python 3.12 兼容补丁
-│   └── ui.html              ← 数学聊天 Web UI（支持 KaTeX 公式渲染）
-├── scripts/
-│   ├── run.py               ← 兼容启动器（运行 nanochat 脚本）
-│   ├── full_train.sh        ← 一键完整训练脚本
-│   ├── train_rl.py          ← MathGPT RL 强化学习训练
-│   ├── chat_cli.py          ← 命令行聊天
-│   └── chat_web.py          ← Web 聊天服务（含 LaTeX 渲染）
-└── runs/                    ← 检查点目录（已 gitignore）
+├── nanochat/                    ← 内嵌的核心框架（已适配本机环境）
+│   ├── gpt.py                   ← GPT 模型（RMSNorm / SDPA / GQA）
+│   ├── optim.py                 ← MuonAdamW 优化器
+│   ├── flash_attention.py       ← 注意力（PyTorch SDPA 回退）
+│   ├── engine.py                ← KV Cache 推理引擎 + 工具调用
+│   ├── tokenizer.py             ← BPE 分词器
+│   ├── checkpoint_manager.py    ← 检查点保存/加载
+│   ├── common.py                ← 设备/精度配置
+│   ├── dataloader.py            ← 预训练数据加载器
+│   └── dataset.py               ← ClimbMix 数据集下载
+│
+├── tasks/                       ← 评估与 SFT 数据集
+│   ├── gsm8k.py                 ← GSM8K 数学题（RL 奖励 + SFT 数据）
+│   ├── smoltalk.py              ← SmolTalk 通用对话（SFT）
+│   ├── mmlu.py                  ← MMLU 学科知识（SFT）
+│   ├── arc.py                   ← ARC 推理题（评估）
+│   ├── humaneval.py             ← HumanEval 代码题（评估）
+│   ├── spellingbee.py           ← 拼写任务（SFT + 评估）
+│   ├── customjson.py            ← 自定义 JSONL 数据集
+│   └── common.py                ← 任务混合工具
+│
+├── scripts/                     ← 训练与推理脚本
+│   ├── run.py                   ← 启动器（设置 PYTHONPATH 后运行模块）
+│   ├── full_train.sh            ← 一键完整训练脚本（5 个阶段）
+│   ├── base_train.py            ← Base 模型预训练
+│   ├── tok_train.py             ← BPE Tokenizer 训练
+│   ├── chat_sft.py              ← 监督微调（SFT）
+│   ├── train_rl.py              ← MathGPT RL 强化学习（REINFORCE / GRPO）
+│   ├── chat_cli.py              ← 命令行聊天
+│   ├── chat_web.py              ← Web 聊天服务（FastAPI + SSE 流式）
+│   ├── chat_eval.py             ← 评估工具（categorical / generative）
+│   ├── base_eval.py             ← Base 模型评估
+│   └── tok_eval.py              ← Tokenizer 评估
+│
+├── math_gpt/                    ← Web UI 资源
+│   ├── ui.html                  ← 聊天界面（KaTeX 公式 + 流式输出）
+│   └── compat.py                ← 历史兼容模块（已不再使用）
+│
+├── docs/                        ← 技术文档
+│   └── RL_SFT_GRPO_INTRO.md    ← SFT / GRPO / RL 历史介绍
+│
+├── TRAINING_LOG.md              ← 训练日志与实验结果
+├── nanochat_readme.md           ← 原始 nanochat 文档（参考）
+└── runs/                        ← 检查点与数据（已 gitignore）
+    ├── base_data_climbmix/      ← 预训练数据分片
+    ├── tokenizer/               ← 训练好的 BPE 分词器
+    ├── base_checkpoints/        ← Base 模型检查点
+    ├── chatsft_checkpoints/     ← SFT 模型检查点
+    └── chatrl_checkpoints/      ← RL 模型检查点（MathGPT）
 ```
 
 ## 训练流程
+
+所有脚本从项目根目录运行，`scripts/run.py` 启动器会自动设置 `PYTHONPATH` 和 `NANOCHAT_BASE_DIR`。
 
 ### 一键训练
 
@@ -59,27 +100,17 @@ python3 -m scripts.run scripts.base_train \
     --num-iterations=3000 --eval-every=200 --eval-tokens=131072 \
     --core-metric-every=-1 --sample-every=500 --run=dummy
 
-# 4. SFT 微调（对话格式 + 数学工具调用，约 8 分钟）
+# 4. SFT 微调（对话格式 + 数学工具调用，约 4~8 分钟）
 python3 -m scripts.run scripts.chat_sft \
     --max-seq-len=256 --device-batch-size=16 --total-batch-size=8192 \
     --num-iterations=1000 --eval-every=200 --eval-tokens=131072 \
-    --run=dummy
+    --chatcore-every=-1 --run=dummy
 
-# 5. MathGPT RL 强化学习（GSM8K 数学题）
+# 5. MathGPT RL 强化学习（GSM8K 数学题，1 epoch ≈ 934 步）
 python3 -m scripts.train_rl \
     --num-epochs=1 --device-batch-size=4 \
     --examples-per-step=8 --num-samples=8 \
     --max-new-tokens=256 --run=dummy
-```
-
-检查点保存在 `runs/` 目录：
-```
-runs/
-├── base_data_climbmix/       ← 预训练数据分片
-├── tokenizer/                ← 分词器
-├── base_checkpoints/         ← 预训练模型
-├── chatsft_checkpoints/      ← SFT 模型
-└── chatrl_checkpoints/       ← RL 模型（MathGPT）
 ```
 
 ## 与模型对话
