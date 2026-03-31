@@ -16,16 +16,10 @@ import os
 import sys
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("NANOCHAT_BASE_DIR", os.path.join(_PROJECT_ROOT, "runs"))
-
-_NANOCHAT_DIR = os.path.join(_PROJECT_ROOT, "..", "nanochat")
-if _NANOCHAT_DIR not in sys.path:
-    sys.path.insert(0, _NANOCHAT_DIR)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from math_gpt import compat
-compat.apply()
+os.environ.setdefault("NANOCHAT_BASE_DIR", os.path.join(_PROJECT_ROOT, "runs"))
 
 import argparse
 import torch
