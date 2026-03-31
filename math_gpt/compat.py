@@ -58,10 +58,10 @@ def _patch_torch_compile():
 
     def _noop_compile(*args, **kwargs):
         """torch.compile 的 no-op 版本：直接返回函数本身。"""
-        # 情况 A：@torch.compile  (fn 作为第一个位置参数)
-        if len(args) == 1 and callable(args[0]) and not kwargs:
+        # 情况 A：@torch.compile 或 model = torch.compile(model, ...)
+        if args and callable(args[0]):
             return args[0]
-        # 情况 B：@torch.compile(...)  (带参数，返回装饰器)
+        # 情况 B：@torch.compile(dynamic=False, ...)  (带参数，返回装饰器)
         return lambda fn: fn
 
     torch.compile = _noop_compile
