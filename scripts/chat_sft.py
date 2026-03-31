@@ -251,11 +251,18 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
                     mask_row.extend(conv_mask)
                     consumed += ddp_world_size  # Track actual consumption
                 else:
-                    # No conversation fits - pad the remainder instead of cropping
-                    # This ensures we never discard any tokens
+                    if len(row) == 0:
+                        # Row is empty and no conversation fits: truncate shortest conversation to avoid all-masked row
+                        # (all-masked rows cause NaN cross-entropy loss)
+                        trunc_idx = min(range(len(conv_buffer)), key=lambda i: len(conv_buffer[i][0]))
+                        conv, conv_mask = conv_buffer.pop(trunc_idx)
+                        row.extend(conv[:remaining])
+                        mask_row.extend(conv_mask[:remaining])
+                        consumed += ddp_world_size
+                    # No conversation fits - pad the remainder
                     content_len = len(row)
-                    row.extend([bos_token] * remaining)  # Pad with BOS tokens
-                    mask_row.extend([0] * remaining)
+                    row.extend([bos_token] * (row_capacity - len(row)))  # Pad with BOS tokens
+                    mask_row.extend([0] * (row_capacity - len(mask_row)))
                     padded = True
                     break  # Row is now full (with padding)
 
