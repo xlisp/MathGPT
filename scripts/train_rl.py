@@ -22,14 +22,22 @@ The trained checkpoints are saved to:
 import os
 import sys
 
-# Point to the MathGPT runs directory for checkpoints
+# 设置 checkpoint 目录（在导入 nanochat 之前设置，避免目录创建到错误位置）
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("NANOCHAT_BASE_DIR", os.path.join(_PROJECT_ROOT, "runs"))
 
-# Make nanochat's tasks/ directory importable (tasks.gsm8k etc.)
+# 添加 nanochat 到路径（tasks.gsm8k 等不在包里，只在项目根目录）
 _NANOCHAT_DIR = os.path.join(_PROJECT_ROOT, "..", "nanochat")
 if _NANOCHAT_DIR not in sys.path:
     sys.path.insert(0, _NANOCHAT_DIR)
+# MathGPT 本身也需要在路径里（用于 math_gpt.compat）
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+# ── 必须在任何 nanochat 导入之前打补丁 ──────────────────────────
+from math_gpt import compat
+compat.apply()
+# ────────────────────────────────────────────────────────────────
 
 import argparse
 import itertools

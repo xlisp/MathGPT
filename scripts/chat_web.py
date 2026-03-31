@@ -22,6 +22,11 @@ os.environ.setdefault("NANOCHAT_BASE_DIR", os.path.join(_PROJECT_ROOT, "runs"))
 _NANOCHAT_DIR = os.path.join(_PROJECT_ROOT, "..", "nanochat")
 if _NANOCHAT_DIR not in sys.path:
     sys.path.insert(0, _NANOCHAT_DIR)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from math_gpt import compat
+compat.apply()
 
 import argparse
 import json
