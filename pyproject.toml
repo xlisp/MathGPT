@@ -1,0 +1,20 @@
+[project]
+name = "mathgpt"
+version = "0.1.0"
+description = "MathGPT - A math reasoning model built on nanochat with RL training on GSM8K"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "nanochat",
+    "datasets>=4.0.0",
+    "fastapi>=0.117.1",
+    "torch>=2.0.0",
+    "uvicorn>=0.36.0",
+    "wandb>=0.21.3",
+]
+
+[tool.uv.sources]
+nanochat = { path = "../nanochat", editable = true }
+
+[tool.uv]
+default-groups = []
