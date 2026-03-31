@@ -136,12 +136,20 @@
 
 | 步数 | Pass@1 | Pass@2 | Pass@3 | Pass@4 |
 |------|--------|--------|--------|--------|
-| 0 | 0.50% | 1.25% | 2.00% | 2.75% |
+| 0（SFT 基线） | 0.50% | 1.25% | 2.00% | 2.75% |
 | 60 | 0.75% | 1.25% | 2.25% | 3.00% |
 | 120 | 1.00% | 2.75% | 3.25% | 4.50% |
+| 180 | 0.75% | 2.00% | 2.25% | 3.25% |
+| 240 | 1.00% | 3.00% | 3.75% | 4.25% |
 | **934（最终）** | **TBD** | **TBD** | **TBD** | **TBD** |
 
-**Checkpoint 保存：** `runs/chatrl_checkpoints/math_d6/`
+> RL 训练进行中（2026-03-31），当前 290/934 步，预计还需 6~8 小时。
+
+**已保存 Checkpoint：**
+- `runs/chatrl_checkpoints/math_d6/model_000060.pt`
+- `runs/chatrl_checkpoints/math_d6/model_000120.pt`
+- `runs/chatrl_checkpoints/math_d6/model_000180.pt`
+- `runs/chatrl_checkpoints/math_d6/model_000240.pt`
 
 ---
 
@@ -174,11 +182,19 @@
 
 ## 模型测试结果
 
-*(RL 训练完成后补充)*
+*(RL 训练完成后补充完整)*
+
+### 当前训练进度（2026-03-31）
+
+| 阶段 | 状态 | 检查点 |
+|------|------|--------|
+| Base 预训练（3000步） | ✅ 完成 | `base_checkpoints/d6/model_003000.pt` |
+| SFT 微调（500步） | ✅ 完成 | `chatsft_checkpoints/d6/model_000500.pt` |
+| RL 强化学习（934步） | 🔄 进行中（290/934，31%） | `chatrl_checkpoints/math_d6/model_000240.pt` |
 
 ### 数学推理测试
 
-待 RL 完成后测试以下问题...
+*(RL 完成后补充实际对话示例)*
 
 ---
 
