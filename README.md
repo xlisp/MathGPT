@@ -1,114 +1,134 @@
 # MathGPT
 
-A math reasoning assistant built on the [nanochat](../nanochat) framework.
-Uses REINFORCE-style RL (simplified GRPO) to train a GPT model to solve
-grade-school math problems (GSM8K) step by step.
+基于 [nanochat](../nanochat) 框架构建的数学推理助手。
+使用 REINFORCE 强化学习（简化版 GRPO）在 GSM8K 小学数学题数据集上训练 GPT 模型，使其能逐步解题。
 
-## Architecture
+## 运行环境
+
+| 组件 | 版本 |
+|------|------|
+| Python | 3.12 |
+| PyTorch | 2.3.1+cu118 |
+| GPU | NVIDIA GeForce GTX 1080（8GB VRAM，SM 6.1） |
+| 精度 | float32（GTX 1080 不支持 bfloat16） |
+
+> **兼容性说明**：nanochat 原本需要 PyTorch ≥ 2.5，本项目已对以下问题打补丁：
+> - `F.rms_norm`（PyTorch 2.4+ 才有）→ 手动实现
+> - `torch.compile`（Python 3.12 + PyTorch 2.3 不支持 Dynamo）→ 替换为恒等操作
+> - `F.scaled_dot_product_attention(enable_gqa=...)`（PyTorch 2.5+ 才有）→ 用 `repeat_interleave` 手动展开
+
+## 项目结构
 
 ```
-nanochat/          ← base framework (GPT model, tokenizer, training utils)
+nanochat/                    ← 基础框架（GPT 模型、分词器、训练工具）
 MathGPT/
-├── scripts/
-│   ├── train_rl.py   ← RL training on GSM8K math problems
-│   ├── chat_cli.py   ← interactive CLI chat
-│   └── chat_web.py   ← web server with LaTeX math rendering
 ├── math_gpt/
-│   └── ui.html       ← math-focused web UI with KaTeX rendering
-└── runs/             ← checkpoints (gitignored)
+│   ├── compat.py            ← PyTorch 2.3 / Python 3.12 兼容补丁
+│   └── ui.html              ← 数学聊天 Web UI（支持 KaTeX 公式渲染）
+├── scripts/
+│   ├── run.py               ← 兼容启动器（运行 nanochat 脚本）
+│   ├── full_train.sh        ← 一键完整训练脚本
+│   ├── train_rl.py          ← MathGPT RL 强化学习训练
+│   ├── chat_cli.py          ← 命令行聊天
+│   └── chat_web.py          ← Web 聊天服务（含 LaTeX 渲染）
+└── runs/                    ← 检查点目录（已 gitignore）
 ```
 
-## Training pipeline
+## 训练流程
 
-### 1. Prerequisites — train the base model with nanochat
+### 一键训练
 
 ```bash
-cd ../nanochat
-
-# (a) Train the base language model
-python -m scripts.base_train --depth 12
-
-# (b) SFT fine-tuning (teaches the model chat format + basic math)
-python -m scripts.chat_sft
+cd /home/xlisp/PyPro/MathGPT
+bash scripts/full_train.sh
 ```
 
-### 2. MathGPT RL training
+### 分步训练
 
 ```bash
-cd ../MathGPT
+# 1. 下载训练数据集（约 800MB，8 个分片）
+python3 -m scripts.run nanochat.dataset -n 8
 
-# Install dependencies
-uv sync          # or: pip install -e ../nanochat && pip install -e .
+# 2. 训练 BPE 分词器（vocab=32768，约 70 秒）
+python3 -m scripts.run scripts.tok_train --max-chars=2000000000
 
-# Single GPU
-python -m scripts.train_rl
+# 3. Base 模型预训练（GTX 1080 配置，约 25 分钟）
+python3 -m scripts.run scripts.base_train \
+    --depth=6 --head-dim=64 --window-pattern=L \
+    --max-seq-len=256 --device-batch-size=16 --total-batch-size=8192 \
+    --num-iterations=3000 --eval-every=200 --eval-tokens=131072 \
+    --core-metric-every=-1 --sample-every=500 --run=dummy
 
-# Multi-GPU (4x)
-torchrun --standalone --nproc_per_node=4 -m scripts.train_rl
+# 4. SFT 微调（对话格式 + 数学工具调用，约 8 分钟）
+python3 -m scripts.run scripts.chat_sft \
+    --max-seq-len=256 --device-batch-size=16 --total-batch-size=8192 \
+    --num-iterations=1000 --eval-every=200 --eval-tokens=131072 \
+    --run=dummy
 
-# Resume from previous RL checkpoint
-python -m scripts.train_rl --source rl --model-tag math_d12
-
-# With wandb logging
-python -m scripts.train_rl --run mathgpt-v1
+# 5. MathGPT RL 强化学习（GSM8K 数学题）
+python3 -m scripts.train_rl \
+    --num-epochs=1 --device-batch-size=4 \
+    --examples-per-step=8 --num-samples=8 \
+    --max-new-tokens=256 --run=dummy
 ```
 
-Checkpoints are saved to `runs/chatrl_checkpoints/math_d<N>/`.
+检查点保存在 `runs/` 目录：
+```
+runs/
+├── base_data_climbmix/       ← 预训练数据分片
+├── tokenizer/                ← 分词器
+├── base_checkpoints/         ← 预训练模型
+├── chatsft_checkpoints/      ← SFT 模型
+└── chatrl_checkpoints/       ← RL 模型（MathGPT）
+```
 
-### 3. Chat with MathGPT
+## 与模型对话
 
-**CLI:**
+**命令行模式：**
 ```bash
-python -m scripts.chat_cli                        # uses RL checkpoint
-python -m scripts.chat_cli --source sft           # uses SFT checkpoint
-python -m scripts.chat_cli --prompt "What is 15% of 80?"
+python3 -m scripts.chat_cli                        # 使用 RL 训练的数学模型
+python3 -m scripts.chat_cli --source sft           # 使用 SFT 模型
+python3 -m scripts.chat_cli --prompt "15% of 80 is?"
 ```
 
-**Web UI** (with LaTeX math rendering):
+**Web UI 模式（支持 LaTeX 公式渲染）：**
 ```bash
-python -m scripts.chat_web               # http://localhost:8000
-python -m scripts.chat_web --port 8080
-python -m scripts.chat_web --source sft  # use SFT model
+python3 -m scripts.chat_web               # http://localhost:8000
+python3 -m scripts.chat_web --port 8080
+python3 -m scripts.chat_web --source sft  # 使用 SFT 模型
 ```
 
-Open http://localhost:8000 — ask any math problem and see step-by-step solutions.
+打开 http://localhost:8000，界面特性：
+- **KaTeX 数学公式渲染**：`$...$`（行内）和 `$$...$$`（块级）
+- **流式输出**：逐 token 显示答案
+- **斜杠命令**：`/temperature 0.8`、`/topk 30`、`/clear`、`/help`
+- **编辑 / 重新生成**：点击任意消息即可编辑或重新生成
+- **示例题目**：点击预设例题快速提问
 
-## How RL training works
+## RL 训练原理
 
-For each training step:
+对每个训练步骤：
 
-1. **Sample rollouts** — for each GSM8K problem, generate `N` candidate solutions
-2. **Score rewards** — compare each solution's final answer against the ground truth
-   - Correct answer → reward = 1.0
-   - Wrong answer   → reward = 0.0
-3. **Compute advantages** — `advantage = reward − mean(reward)`
-4. **Policy gradient** — update the model to increase probability of high-advantage responses:
+1. **采样 Rollouts**：对每道 GSM8K 数学题生成 N 条候选答案
+2. **计算奖励**：将最终答案与标准答案对比
+   - 答对 → reward = 1.0
+   - 答错 → reward = 0.0
+3. **计算优势**：`advantage = reward − mean(reward)`
+4. **策略梯度更新**：最大化高优势答案的生成概率
    ```
    loss = −(logp × advantage)
    ```
 
-This is a clean REINFORCE implementation without KL regularization or PPO clipping,
-following the DAPO style with token-level normalization.
+这是一个干净的 REINFORCE 实现，无 KL 正则化，无 PPO clipping，采用 DAPO 风格的 token 级归一化。
 
-## Web UI features
+## 参数说明
 
-- **KaTeX rendering** — LaTeX math in responses is rendered automatically
-  - Inline: `$E = mc^2$`
-  - Display: `$$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$$`
-- **Streaming** — responses appear token by token
-- **Slash commands** — `/temperature 0.8`, `/topk 30`, `/clear`, `/help`
-- **Edit & regenerate** — click any message to edit/regenerate
-- **Example prompts** — click chips to try sample problems
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--source` | `rl` | 加载的检查点类型：`sft` 或 `rl` |
+| `--model-tag` | 自动 | 模型标签（如 `math_d6`） |
+| `--temperature` | 0.6 | 采样温度 |
+| `--top-k` | 50 | Top-k 采样 |
+| `--max-tokens` | 512 | 最大生成长度 |
 
-## Configuration
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--source` | `rl` | Checkpoint to load: `sft` or `rl` |
-| `--model-tag` | auto | Model tag (e.g. `math_d12`) |
-| `--temperature` | 0.6 | Sampling temperature |
-| `--top-k` | 50 | Top-k sampling |
-| `--max-tokens` | 512 | Max response length |
-
-Checkpoint directory is controlled by the `NANOCHAT_BASE_DIR` environment variable
-(defaults to `./runs/` when running MathGPT scripts).
+检查点目录由 `NANOCHAT_BASE_DIR` 环境变量控制（MathGPT 脚本默认设为 `./runs/`）。
