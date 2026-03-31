@@ -183,7 +183,9 @@ class Engine:
         # As a quick hack, we're making generate() function inherit and know about this repo-wise assumption.
         # I think there has to be a bigger refactor to deal with device/dtype tracking across the codebase.
         # In particular, the KVCache should allocate its tensors lazily
-        dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+        # 用 COMPUTE_DTYPE 而非硬编码 bfloat16，GTX 1080 等旧卡走 float32
+        from nanochat.common import COMPUTE_DTYPE
+        dtype = COMPUTE_DTYPE
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
 
