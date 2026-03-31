@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>MathGPT</title>
+    <!-- KaTeX for math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+            onload="katexLoaded = true;"></script>
+    <style>
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+
+        body {
+            font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+            background: #f8f9ff;
+            color: #1a1a2e;
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Header ─────────────────────────────────── */
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3730a3 100%);
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(30,58,138,0.3);
+        }
+
+        .header-left { display: flex; align-items: center; gap: 0.75rem; }
+
+        .header-logo {
+            width: 36px; height: 36px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.25rem; font-weight: 900; color: #fff;
+        }
+
+        .header h1 {
+            font-size: 1.3rem; font-weight: 700; margin: 0; color: #fff;
+            letter-spacing: -0.02em;
+        }
+        .header-sub { font-size: 0.75rem; color: rgba(255,255,255,0.7); margin: 0; }
+
+        .new-btn {
+            width: 32px; height: 32px; padding: 0;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 0.5rem;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.2s;
+        }
+        .new-btn:hover { background: rgba(255,255,255,0.2); }
+
+        /* ── Chat area ───────────────────────────────── */
+        .chat-container { flex: 1; overflow-y: auto; background: #f8f9ff; }
+        .chat-wrapper {
+            max-width: 52rem; margin: 0 auto;
+            padding: 2rem 1.5rem 3rem;
+            display: flex; flex-direction: column; gap: 1rem;
+        }
+
+        /* ── Messages ────────────────────────────────── */
+        .message { display: flex; }
+        .message.user  { justify-content: flex-end; }
+        .message.assistant { justify-content: flex-start; }
+
+        .message-content {
+            line-height: 1.7; max-width: 100%;
+            white-space: pre-wrap; word-break: break-word;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #1e3a8a, #3730a3);
+            color: #fff; border-radius: 1.2rem 1.2rem 0.3rem 1.2rem;
+            padding: 0.75rem 1.1rem; max-width: 70%;
+            cursor: pointer; transition: opacity 0.2s;
+        }
+        .message.user .message-content:hover { opacity: 0.9; }
+
+        .message.assistant .message-content {
+            background: #fff; border: 1px solid #e2e8f0;
+            border-radius: 0.3rem 1.2rem 1.2rem 1.2rem;
+            padding: 0.9rem 1.2rem;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            cursor: pointer; transition: box-shadow 0.2s;
+        }
+        .message.assistant .message-content:hover {
+            box-shadow: 0 2px 8px rgba(30,58,138,0.12);
+        }
+
+        .message.console .message-content {
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 0.85rem;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 0.6rem 0.9rem;
+            color: #475569;
+            max-width: 80%;
+        }
+
+        /* KaTeX overrides */
+        .katex-display { margin: 0.5em 0; overflow-x: auto; }
+        .katex { font-size: 1em; }
+
+        /* Inline code in assistant messages */
+        .message.assistant .message-content code {
+            background: #f1f5f9;
+            border-radius: 3px;
+            padding: 0.1em 0.35em;
+            font-family: 'Menlo', 'Monaco', monospace;
+            font-size: 0.9em;
+            color: #1e40af;
+        }
+
+        /* ── Input area ──────────────────────────────── */
+        .input-container {
+            background: #fff;
+            border-top: 1px solid #e2e8f0;
+            padding: 1rem;
+            padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+        }
+
+        .input-wrapper {
+            max-width: 52rem; margin: 0 auto;
+            display: flex; gap: 0.75rem; align-items: flex-end;
+        }
+
+        .chat-input {
+            flex: 1; padding: 0.8rem 1rem;
+            border: 1.5px solid #c7d2fe;
+            border-radius: 0.75rem;
+            background: #fff; color: #1a1a2e;
+            font-size: 1rem; line-height: 1.5;
+            resize: none; outline: none;
+            min-height: 54px; max-height: 200px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .chat-input::placeholder { color: #94a3b8; }
+        .chat-input:focus {
+            border-color: #3730a3;
+            box-shadow: 0 0 0 3px rgba(55,48,163,0.1);
+        }
+
+        .send-button {
+            flex-shrink: 0; width: 54px; height: 54px; padding: 0;
+            border: none; border-radius: 0.75rem;
+            background: linear-gradient(135deg, #1e3a8a, #3730a3);
+            color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: opacity 0.2s, transform 0.1s;
+        }
+        .send-button:hover:not(:disabled) { opacity: 0.9; transform: scale(1.03); }
+        .send-button:disabled {
+            cursor: not-allowed; background: #e2e8f0; color: #94a3b8;
+        }
+
+        /* ── Typing indicator ────────────────────────── */
+        .typing-indicator { color: #6b7280; }
+        .typing-indicator::after {
+            content: '···';
+            animation: blink 1.4s infinite;
+        }
+        @keyframes blink {
+            0%, 60%, 100% { opacity: 0.3; }
+            30% { opacity: 1; }
+        }
+
+        .error-message {
+            background: #fef2f2; border: 1px solid #fecaca;
+            color: #b91c1c; padding: 0.75rem 1rem;
+            border-radius: 0.75rem; margin-top: 0.5rem;
+        }
+
+        /* ── Welcome card ────────────────────────────── */
+        .welcome {
+            text-align: center; padding: 3rem 1rem;
+            color: #64748b;
+        }
+        .welcome-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .welcome h2 { font-size: 1.4rem; color: #1e3a8a; margin: 0 0 0.5rem; }
+        .welcome p  { font-size: 0.95rem; max-width: 36rem; margin: 0 auto 1.5rem; }
+
+        .example-chips {
+            display: flex; flex-wrap: wrap;
+            gap: 0.5rem; justify-content: center;
+            max-width: 40rem; margin: 0 auto;
+        }
+        .chip {
+            background: #fff; border: 1.5px solid #c7d2fe;
+            border-radius: 2rem; padding: 0.4rem 1rem;
+            font-size: 0.875rem; color: #3730a3;
+            cursor: pointer; transition: background 0.2s, border-color 0.2s;
+        }
+        .chip:hover { background: #eef2ff; border-color: #818cf8; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <div class="header-logo">∑</div>
+        <div>
+            <h1>MathGPT</h1>
+            <p class="header-sub">Powered by nanochat + REINFORCE on GSM8K</p>
+        </div>
+    </div>
+    <button class="new-btn" onclick="newConversation()" title="New conversation (Ctrl+Shift+N)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"/><path d="M5 12h14"/>
+        </svg>
+    </button>
+</div>
+
+<div class="chat-container" id="chatContainer">
+    <div class="chat-wrapper" id="chatWrapper">
+        <div class="welcome" id="welcomeCard">
+            <div class="welcome-icon">🧮</div>
+            <h2>MathGPT</h2>
+            <p>A math reasoning assistant trained with reinforcement learning on grade-school math problems.
+               Ask me arithmetic, word problems, or any step-by-step math question.</p>
+            <div class="example-chips">
+                <span class="chip" onclick="useExample(this)">If you have 3 bags with 12 apples each, how many total?</span>
+                <span class="chip" onclick="useExample(this)">Solve: 2x + 5 = 17</span>
+                <span class="chip" onclick="useExample(this)">A train travels 60 km/h for 2.5 hours. How far?</span>
+                <span class="chip" onclick="useExample(this)">What is 15% of 340?</span>
+                <span class="chip" onclick="useExample(this)">A rectangle is 8 cm by 5 cm. What is its area?</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="input-container">
+    <div class="input-wrapper">
+        <textarea id="chatInput" class="chat-input"
+            placeholder="Ask a math problem... (Shift+Enter for newline)"
+            rows="1" onkeydown="handleKeyDown(event)"></textarea>
+        <button id="sendButton" class="send-button" onclick="sendMessage()" disabled>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+            </svg>
+        </button>
+    </div>
+</div>
+
+<script>
+    const API_URL = '';
+    const chatContainer = document.getElementById('chatContainer');
+    const chatWrapper   = document.getElementById('chatWrapper');
+    const chatInput     = document.getElementById('chatInput');
+    const sendButton    = document.getElementById('sendButton');
+    const welcomeCard   = document.getElementById('welcomeCard');
+
+    let messages      = [];
+    let isGenerating  = false;
+    let katexLoaded   = false;  // set true by KaTeX onload
+    let currentTemperature = 0.6;
+    let currentTopK        = 50;
+
+    // ── Auto-resize textarea ──────────────────────────
+    chatInput.addEventListener('input', function () {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        sendButton.disabled = !this.value.trim() || isGenerating;
+    });
+
+    function handleKeyDown(e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+            e.preventDefault();
+            if (!isGenerating) newConversation();
+        }
+    });
+
+    // ── Example chips ─────────────────────────────────
+    function useExample(el) {
+        chatInput.value = el.textContent.trim();
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
+        sendButton.disabled = false;
+        chatInput.focus();
+    }
+
+    // ── New conversation ──────────────────────────────
+    function newConversation() {
+        messages = [];
+        chatWrapper.innerHTML = '';
+        chatWrapper.appendChild(welcomeCard);
+        welcomeCard.style.display = '';
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+        sendButton.disabled = false;
+        isGenerating = false;
+        chatInput.focus();
+    }
+
+    // ── Math rendering via KaTeX auto-render ──────────
+    function renderMath(el) {
+        if (typeof renderMathInElement !== 'undefined') {
+            renderMathInElement(el, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$',  right: '$',  display: false },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false },
+                ],
+                throwOnError: false,
+            });
+        }
+    }
+
+    // ── Add message to DOM ────────────────────────────
+    function addMessage(role, content, index = null) {
+        welcomeCard.style.display = 'none';
+
+        const div = document.createElement('div');
+        div.className = `message ${role}`;
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.textContent = content;
+
+        if (role === 'assistant' && index !== null) {
+            contentDiv.title = 'Click to regenerate';
+            contentDiv.addEventListener('click', () => { if (!isGenerating) regenerateMessage(index); });
+        }
+        if (role === 'user' && index !== null) {
+            contentDiv.title = 'Click to edit';
+            contentDiv.addEventListener('click', () => { if (!isGenerating) editMessage(index); });
+        }
+
+        div.appendChild(contentDiv);
+        chatWrapper.appendChild(div);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        return contentDiv;
+    }
+
+    // ── Edit user message ─────────────────────────────
+    function editMessage(idx) {
+        if (idx < 0 || idx >= messages.length) return;
+        if (messages[idx].role !== 'user') return;
+
+        chatInput.value = messages[idx].content;
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
+
+        messages = messages.slice(0, idx);
+        const allMsgs = chatWrapper.querySelectorAll('.message');
+        for (let i = idx; i < allMsgs.length; i++) allMsgs[i].remove();
+
+        sendButton.disabled = false;
+        chatInput.focus();
+    }
+
+    // ── Regenerate assistant response ─────────────────
+    async function regenerateMessage(idx) {
+        if (idx < 0 || idx >= messages.length) return;
+        if (messages[idx].role !== 'assistant') return;
+
+        messages = messages.slice(0, idx);
+        const allMsgs = chatWrapper.querySelectorAll('.message');
+        for (let i = idx; i < allMsgs.length; i++) allMsgs[i].remove();
+
+        await generateAssistantResponse();
+    }
+
+    // ── Generate assistant response (streaming) ───────
+    async function generateAssistantResponse() {
+        isGenerating = true;
+        sendButton.disabled = true;
+
+        const contentDiv = addMessage('assistant', '');
+        contentDiv.innerHTML = '<span class="typing-indicator"></span>';
+
+        try {
+            const resp = await fetch(`${API_URL}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: messages,
+                    temperature: currentTemperature,
+                    top_k: currentTopK,
+                    max_tokens: 512,
+                }),
+            });
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+
+            const reader  = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let fullText  = '';
+            contentDiv.textContent = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                for (const line of decoder.decode(value).split('\n')) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (data.token) {
+                            fullText += data.token;
+                            contentDiv.textContent = fullText;
+                            chatContainer.scrollTop = chatContainer.scrollHeight;
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            // After streaming completes, render math
+            renderMath(contentDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            const assistantIndex = messages.length;
+            messages.push({ role: 'assistant', content: fullText });
+            contentDiv.setAttribute('data-index', assistantIndex);
+            contentDiv.title = 'Click to regenerate';
+            contentDiv.addEventListener('click', () => { if (!isGenerating) regenerateMessage(assistantIndex); });
+
+        } catch (err) {
+            console.error(err);
+            contentDiv.innerHTML = `<div class="error-message">Error: ${err.message}</div>`;
+        } finally {
+            isGenerating = false;
+            sendButton.disabled = !chatInput.value.trim();
+        }
+    }
+
+    // ── Slash commands ────────────────────────────────
+    function handleSlash(cmd) {
+        const parts = cmd.trim().split(/\s+/);
+        switch (parts[0].toLowerCase()) {
+            case '/temperature':
+                if (!parts[1]) { addMessage('console', `temperature = ${currentTemperature}`); }
+                else {
+                    const v = parseFloat(parts[1]);
+                    if (isNaN(v) || v < 0 || v > 2) addMessage('console', 'temperature must be 0.0–2.0');
+                    else { currentTemperature = v; addMessage('console', `temperature set to ${v}`); }
+                }
+                return true;
+            case '/topk':
+                if (!parts[1]) { addMessage('console', `top_k = ${currentTopK}`); }
+                else {
+                    const v = parseInt(parts[1]);
+                    if (isNaN(v) || v < 1 || v > 200) addMessage('console', 'top_k must be 1–200');
+                    else { currentTopK = v; addMessage('console', `top_k set to ${v}`); }
+                }
+                return true;
+            case '/clear':
+                newConversation(); return true;
+            case '/help':
+                addMessage('console',
+                    'Commands:\n' +
+                    '/temperature [v]  — get/set sampling temperature (0.0–2.0)\n' +
+                    '/topk [v]         — get/set top-k sampling (1–200)\n' +
+                    '/clear            — clear conversation\n' +
+                    '/help             — show this help'
+                );
+                return true;
+        }
+        return false;
+    }
+
+    // ── Send message ──────────────────────────────────
+    async function sendMessage() {
+        const msg = chatInput.value.trim();
+        if (!msg || isGenerating) return;
+
+        if (msg.startsWith('/')) {
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+            handleSlash(msg);
+            return;
+        }
+
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+
+        const userIndex = messages.length;
+        messages.push({ role: 'user', content: msg });
+        addMessage('user', msg, userIndex);
+
+        await generateAssistantResponse();
+    }
+
+    // ── Init ──────────────────────────────────────────
+    sendButton.disabled = false;
+    chatInput.focus();
+
+    fetch(`${API_URL}/health`)
+        .then(r => r.json())
+        .then(d => console.log('MathGPT ready:', d))
+        .catch(() => {
+            chatWrapper.innerHTML = `
+                <div class="error-message" style="margin:2rem auto;max-width:40rem">
+                    ⚠️ MathGPT server is not running.<br>
+                    Start it with: <code>python -m scripts.chat_web</code>
+                </div>`;
+        });
+</script>
+</body>
+</html>
