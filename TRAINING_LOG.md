@@ -281,3 +281,128 @@ There 2*2 = [calc: 2*2] = 4
 - 增加上下文长度（512 或 1024）
 - 增加 SFT 迭代次数（3000+ 步）
 - 训练更大的模型（depth=12, embd=768 → ~300M 参数）
+
+---
+
+## A800 训练方案（第二轮）
+
+### 训练环境
+
+| 项目 | GTX 1080（第一轮） | A800（第二轮） |
+|------|-------------------|---------------|
+| GPU | NVIDIA GeForce GTX 1080 (8 GB, SM 6.1) | NVIDIA A800-SXM4-80GB (80 GB, SM 8.0) |
+| 计算精度 | float32 | bfloat16（自动检测 SM 8.0） |
+| Python | 3.12 | 3.11.13 |
+| PyTorch | 2.3.1+cu118 | 2.7.1+cu128 |
+| CUDA | 11.8 | 12.8 |
+| cuDNN | — | 9.07.01 |
+| BF16 峰值算力 | 不支持 | 312 TFLOPS |
+| 训练日期 | 2026-03-31 | 2026-04-03 |
+
+### 硬件升级自动适配项
+
+以下特性由代码自动检测，**无需手动修改**：
+
+| 特性 | GTX 1080 行为 | A800 行为 | 检测逻辑 |
+|------|-------------|-----------|---------|
+| 计算精度 | float32 (SM 6.1 < 8.0) | bfloat16 (SM 8.0 ≥ 8.0) | `nanochat/common.py` `_detect_compute_dtype()` |
+| Flash Attention | SDPA 回退 | SDPA（A800 非 Hopper，不触发 FA3） | `nanochat/flash_attention.py` |
+| `torch.compile` | 不可用 (Python 3.12 + PT 2.3) | 可用 (Python 3.11 + PT 2.7) | `nanochat/optim.py` 运行时检测 |
+| `F.rms_norm` | 回退到方差实现 (PT < 2.4) | 原生支持 (PT 2.7) | `nanochat/gpt.py` |
+| SDPA `enable_gqa` | `repeat_interleave` 展开 KV 头 (PT < 2.5) | 原生 GQA 支持 (PT 2.7) | `nanochat/flash_attention.py` |
+| TF32 matmul | 不支持 | 自动启用 (`set_float32_matmul_precision("high")`) | `nanochat/common.py` |
+
+### 训练参数对比
+
+#### 阶段 1：数据集
+
+| 参数 | GTX 1080 | A800 | 提升 |
+|------|---------|------|------|
+| 分片数 | 8 | 100 | **12.5x** |
+| 数据量 | ~800 MB | ~10 GB | **12.5x** |
+| 预估 token 数 | ~400M | ~5B | **~12.5x** |
+
+#### 阶段 3：Base 预训练
+
+| 参数 | GTX 1080 | A800 | 提升 |
+|------|---------|------|------|
+| depth | 6 | 20 | 3.3x 层数 |
+| head-dim | 64 | 128 | 2x |
+| n_embd | 384 | 1280 | 3.3x |
+| 参数量 | ~73.5M | ~700M | **~10x** |
+| max-seq-len | 256 | 2048 | **8x** |
+| window-pattern | L (全注意力) | SSSL (混合窗口) | 更高效 |
+| device-batch-size | 16 | 32 | 2x |
+| total-batch-size | 8,192 | 524,288 | **64x** |
+| num-iterations | 3,000 | 5,000 | 1.7x |
+| 总训练 tokens | ~24M | ~2.6B | **~108x** |
+| eval-tokens | 131,072 | 524,288 | 4x |
+| save-every | 仅结束时 | 每 1000 步 | 有中间检查点 |
+
+#### 阶段 4：SFT 微调
+
+| 参数 | GTX 1080 | A800 | 提升 |
+|------|---------|------|------|
+| num-iterations | 500 | 3,000 | **6x** |
+| max-seq-len | 256 | 2048 | **8x** |
+| total-batch-size | 8,192 | 524,288 | **64x** |
+| gsm8k-epochs | 4 | 8 | **2x** |
+| mmlu-epochs | 3 | 5 | **1.7x** |
+| 总训练 tokens | ~4M | ~1.6B | **~400x** |
+
+#### 阶段 5：RL 强化学习
+
+| 参数 | GTX 1080 | A800 | 提升 |
+|------|---------|------|------|
+| num-epochs | 1 | 3 | **3x** |
+| device-batch-size | 4 | 16 | **4x** |
+| examples-per-step | 8 | 32 | **4x** |
+| num-samples | 8 (实际 2/题) | 16 | **2x 采样/题** |
+| max-new-tokens | 256 | 512 | **2x** |
+| 总优化步数 | 934 | ~700 (更大 examples-per-step) | — |
+| 总 RL epochs | 1 | 3 | **3x** |
+
+### A800 预估训练时间
+
+A800 bf16 峰值算力 312 TFLOPS，约为 GTX 1080 fp32 (~8.87 TFLOPS) 的 **35x**。考虑到模型更大、数据更多，实际训练时间预估：
+
+| 阶段 | GTX 1080 实际耗时 | A800 预估耗时 | 说明 |
+|------|------------------|-------------|------|
+| 数据下载 | ~2 分钟 (8 shards) | ~15 分钟 (100 shards) | 取决于网络带宽 |
+| Tokenizer | ~3 分钟 | ~3 分钟 | CPU 密集，与 GPU 无关 |
+| Base 预训练 | 25 分钟 | **2-4 小时** | 模型 10x 大 + 数据 108x 多，但 GPU 35x 快 |
+| SFT 微调 | 4 分钟 | **30-60 分钟** | 步数 6x + 更大模型 |
+| RL 训练 | 17.5 小时 | **3-6 小时** | 3 epochs 但 GPU 生成速度快得多 |
+| **总计** | **~19 小时** | **~6-11 小时** | |
+
+> **注：** 以上为粗略估计。Base 预训练的瓶颈是 FLOPS（模型 FLOPS 增长 ~108x，GPU 算力仅增长 35x，但 bf16 比 fp32 效率更高，加上 torch.compile 和 TF32 matmul 优化，实际加速比更高）。RL 阶段的瓶颈是生成（autoregressive decoding），A800 在此场景下加速效果尤其显著。
+
+### 预期效果提升
+
+| 指标 | GTX 1080 结果 | A800 预期 | 提升来源 |
+|------|-------------|-----------|---------|
+| Base BPB | 1.356 | < 1.0 | 10x 模型 + 108x 数据 |
+| SFT BPB | 0.961 | < 0.7 | 6x 步数 + 更强基础模型 |
+| RL Pass@1 | 2.75% (峰值) | **15-30%+** | 更大模型 + 长上下文 + 稳定梯度 |
+| 数学推理 | 8/8 全错，陷入循环 | 能正确解多步推理题 | 2048 上下文不截断 |
+
+**关键改善逻辑：**
+
+1. **模型容量 ~10x (73.5M → ~700M)**：上次模型太小，无法泛化推理模式。700M 参数足以记忆 GSM8K 级别的数学推理规律。
+2. **上下文长度 8x (256 → 2048)**：上次推理链在 256 token 处被截断，导致模型陷入重复乘法循环。2048 token 可以完整展开多步推理。
+3. **预训练数据 108x (~24M → ~2.6B tokens)**：上次 24M tokens 严重不足，模型连基本语言能力都没学好。2.6B tokens 可以建立扎实的语言基础。
+4. **SFT 充分训练 (500 → 3000 步，GSM8K 8 epochs)**：充分学习"理解题意 → 分步计算 → 汇总答案"的对话模式。
+5. **RL 更稳定 (16 samples/题 × 3 epochs)**：更多采样降低 REINFORCE 梯度方差，3 个 epoch 提供更多优化机会。
+
+### 运行命令
+
+```bash
+# 在 A800 机器上
+cd /mnt/openclaw/MathGPT
+bash scripts/full_train_a800.sh
+```
+
+如果 Base 训练阶段 OOM，调低 device-batch-size：
+```bash
+# 编辑 scripts/full_train_a800.sh，将 --device-batch-size=32 改为 16
+```
