@@ -31,7 +31,7 @@ cd "$PROJECT_ROOT"
 step "1/5  下载训练数据集（100 分片 ≈ 10GB）"
 # 上次仅 8 shards (~800MB, ~24M tokens)，远远不够
 # 100 shards 约提供 ~5B tokens 的文本数据
-$RUN nanochat.dataset -n 100
+# $RUN nanochat.dataset -n 100 ## --- 已经下载好：/mnt/openclaw/MathGPT/runs/base_data_climbmix/
 
 # ──────────────────────────────────────────────────────────────
 step "2/5  训练 Tokenizer (BPE, vocab=32768)"
