@@ -83,6 +83,7 @@ $RUN scripts.chat_sft \
     --eval-tokens=524288 \
     --gsm8k-epochs=8 \
     --mmlu-epochs=5 \
+    --offline=data/hf_datasets \
     --run=dummy
 
 # ──────────────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ python3 -m scripts.train_rl \
     --eval-every=60 \
     --eval-examples=400 \
     --save-every=60 \
+    --offline=data/hf_datasets \
     --run=dummy
 
 echo -e "\n${GREEN}====== 训练完成！ ======${NC}"

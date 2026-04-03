@@ -4,16 +4,20 @@ https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk
 We use the "smol" version, which is more appropriate for smaller models.
 """
 
-from datasets import load_dataset
+import os
+from datasets import load_dataset, load_from_disk
 from tasks.common import Task
 
 class SmolTalk(Task):
     """ smol-smoltalk dataset. train is 460K rows, test is 24K rows. """
 
-    def __init__(self, split, **kwargs):
+    def __init__(self, split, offline_dir=None, **kwargs):
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SmolTalk split must be train|test"
-        self.ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split).shuffle(seed=42)
+        if offline_dir:
+            self.ds = load_from_disk(os.path.join(offline_dir, "smol-smoltalk", split)).shuffle(seed=42)
+        else:
+            self.ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split).shuffle(seed=42)
         self.length = len(self.ds)
 
     def num_examples(self):

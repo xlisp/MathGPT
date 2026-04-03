@@ -71,6 +71,7 @@ parser.add_argument("--init-lr-frac", type=float, default=0.05, help="initial LR
 parser.add_argument("--eval-every", type=int, default=60, help="evaluate pass@k every N steps")
 parser.add_argument("--eval-examples", type=int, default=400, help="number of examples for pass@k evaluation")
 parser.add_argument("--save-every", type=int, default=60, help="save checkpoint every N steps")
+parser.add_argument("--offline", type=str, default=None, help="path to local HF datasets dir for offline training")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -95,8 +96,8 @@ engine = Engine(model, tokenizer)
 # -----------------------------------------------------------------------------
 # Rollout generator: yields batches of (sequences, inputs, targets, rewards, advantages)
 
-train_task = GSM8K(subset="main", split="train")
-val_task   = GSM8K(subset="main", split="test")
+train_task = GSM8K(subset="main", split="train", offline_dir=args.offline)
+val_task   = GSM8K(subset="main", split="test", offline_dir=args.offline)
 num_steps  = (len(train_task) // args.examples_per_step) * args.num_epochs
 print0(f"GSM8K train size: {len(train_task)}  |  steps: {num_steps}")
 

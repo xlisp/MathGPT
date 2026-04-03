@@ -15,7 +15,8 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
-from datasets import load_dataset
+import os
+from datasets import load_dataset, load_from_disk
 from tasks.common import Task
 
 
@@ -36,11 +37,14 @@ def extract_answer(completion):
 
 class GSM8K(Task):
 
-    def __init__(self, subset, split, **kwargs):
+    def __init__(self, subset, split, offline_dir=None, **kwargs):
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
         assert split in ["train", "test"], "GSM8K split must be train|test"
-        self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
+        if offline_dir:
+            self.ds = load_from_disk(os.path.join(offline_dir, "gsm8k", split)).shuffle(seed=42)
+        else:
+            self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
 
     @property
     def eval_type(self):
