@@ -24,6 +24,7 @@ from contextlib import contextmanager
 import wandb
 import torch
 import torch.distributed as dist
+from torch.utils.tensorboard import SummaryWriter
 
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
@@ -98,6 +99,13 @@ print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+
+# TensorBoard logging init
+tb_writer = None
+if master_process:
+    tb_log_dir = os.path.join(get_base_dir(), "tb_logs", "base_train", args.run if args.run != "dummy" else f"d{args.depth}")
+    tb_writer = SummaryWriter(log_dir=tb_log_dir)
+    print0(f"TensorBoard logging to: {tb_log_dir}")
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
@@ -433,6 +441,9 @@ while True:
             "total_training_time": total_training_time,
             "val/bpb": val_bpb,
         })
+        if tb_writer is not None:
+            tb_writer.add_scalar("val/bpb", val_bpb, step)
+            tb_writer.add_scalar("val/min_bpb", min_val_bpb, step)
         model.train()
 
     # once in a while: estimate the CORE metric (all ranks participate)
@@ -450,6 +461,10 @@ while True:
             "core_metric": results["core_metric"],
             "centered_results": results["centered_results"],
         })
+        if tb_writer is not None:
+            tb_writer.add_scalar("eval/core_metric", results["core_metric"], step)
+            for task_name, acc in results["centered_results"].items():
+                tb_writer.add_scalar(f"eval/{task_name}", acc, step)
         model.train()
 
     # once in a while: sample from the model (only on master process)
@@ -565,6 +580,12 @@ while True:
         eta_str = ""
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    if tb_writer is not None:
+        tb_writer.add_scalar("train/loss", debiased_smooth_loss, step)
+        tb_writer.add_scalar("train/lrm", lrm, step)
+        tb_writer.add_scalar("train/dt", dt, step)
+        tb_writer.add_scalar("train/tok_per_sec", tok_per_sec, step)
+        tb_writer.add_scalar("train/mfu", mfu, step)
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -626,5 +647,7 @@ get_report().log(section="Base model training", data=[
 ])
 
 # cleanup
+if tb_writer is not None:
+    tb_writer.close()
 wandb_run.finish() # wandb run finish
 compute_cleanup()

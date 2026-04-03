@@ -34,6 +34,7 @@ import itertools
 import wandb
 import torch
 import torch.distributed as dist
+from torch.utils.tensorboard import SummaryWriter
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
 from nanochat.checkpoint_manager import save_checkpoint, load_model
@@ -84,6 +85,13 @@ master_process = ddp_rank == 0
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="mathgpt-rl", name=args.run, config=user_config)
+
+# TensorBoard logging init
+tb_writer = None
+if master_process:
+    tb_log_dir = os.path.join(get_base_dir(), "tb_logs", "train_rl", args.run if args.run != "dummy" else "default")
+    tb_writer = SummaryWriter(log_dir=tb_log_dir)
+    print0(f"TensorBoard logging to: {tb_log_dir}")
 
 print0(f"MathGPT RL Training")
 print0(f"Checkpoints will be saved to: {get_base_dir()}/chatrl_checkpoints/")
@@ -225,6 +233,9 @@ for step in range(num_steps):
         print_passk = [f"Pass@{k}: {passk[k-1].item():.4f}" for k in range(1, args.device_batch_size + 1)]
         print0(f"[Eval] Step {step} | {', '.join(print_passk)}")
         wandb_run.log({"step": step, **{f"pass@{k}": passk[k-1].item() for k in range(1, args.device_batch_size + 1)}})
+        if tb_writer is not None:
+            for k in range(1, args.device_batch_size + 1):
+                tb_writer.add_scalar(f"eval/pass@{k}", passk[k-1].item(), step)
 
     # Accumulate gradients over `examples_per_rank` problems
     rewards_list, sequence_lengths = [], []
@@ -265,6 +276,9 @@ for step in range(num_steps):
         mean_reward, mean_seq_len = r_t.item(), l_t.item()
     print0(f"Step {step}/{num_steps} | reward: {mean_reward:.4f} | seq_len: {mean_seq_len:.1f}")
     wandb_run.log({"step": step, "reward": mean_reward, "sequence_length": mean_seq_len})
+    if tb_writer is not None:
+        tb_writer.add_scalar("train/reward", mean_reward, step)
+        tb_writer.add_scalar("train/sequence_length", mean_seq_len, step)
 
     # Update parameters
     lrm = get_lr_multiplier(step)
@@ -273,6 +287,8 @@ for step in range(num_steps):
     optimizer.step()
     model.zero_grad(set_to_none=True)
     wandb_run.log({"step": step, "lr_multiplier": lrm})
+    if tb_writer is not None:
+        tb_writer.add_scalar("train/lr_multiplier", lrm, step)
 
     # Save checkpoint
     if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
@@ -288,6 +304,8 @@ for step in range(num_steps):
         )
         print0(f"Saved checkpoint to {checkpoint_dir}/model_{step:06d}.pt")
 
+if tb_writer is not None:
+    tb_writer.close()
 wandb_run.finish()
 compute_cleanup()
 print0("MathGPT RL training complete.")

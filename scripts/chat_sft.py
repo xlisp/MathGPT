@@ -16,6 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
@@ -88,6 +89,13 @@ else:
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config)
+
+# TensorBoard logging init
+tb_writer = None
+if master_process:
+    tb_log_dir = os.path.join(get_base_dir(), "tb_logs", "chat_sft", args.run if args.run != "dummy" else "default")
+    tb_writer = SummaryWriter(log_dir=tb_log_dir)
+    print0(f"TensorBoard logging to: {tb_log_dir}")
 
 # Flash Attention status
 if not HAS_FA3:
@@ -366,6 +374,9 @@ while True:
             "total_training_time": total_training_time,
             "val/bpb": val_bpb,
         })
+        if tb_writer is not None:
+            tb_writer.add_scalar("val/bpb", val_bpb, step)
+            tb_writer.add_scalar("val/min_bpb", min_val_bpb, step)
         model.train()
 
     # once in a while: estimate the ChatCORE metric (all ranks participate)
@@ -401,6 +412,11 @@ while True:
             "chatcore_cat": chatcore_cat,
             **{f"chatcore/{task_name}": acc for task_name, acc in task_results.items()},
         })
+        if tb_writer is not None:
+            tb_writer.add_scalar("eval/chatcore", chatcore, step)
+            tb_writer.add_scalar("eval/chatcore_cat", chatcore_cat, step)
+            for task_name, acc in task_results.items():
+                tb_writer.add_scalar(f"eval/{task_name}", acc, step)
         model.train()
 
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
@@ -482,6 +498,12 @@ while True:
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {total_training_time/60:.2f}m")
+    if tb_writer is not None:
+        tb_writer.add_scalar("train/loss", debiased_smooth_loss, step)
+        tb_writer.add_scalar("train/lrm", lrm, step)
+        tb_writer.add_scalar("train/dt", dt, step)
+        tb_writer.add_scalar("train/tok_per_sec", tok_per_sec, step)
+        tb_writer.add_scalar("train/mfu", mfu, step)
     if step % 10 == 0:
         wandb_run.log({
             "step": step,
@@ -523,5 +545,7 @@ get_report().log(section="SFT", data=[
 ])
 
 # cleanup
+if tb_writer is not None:
+    tb_writer.close()
 wandb_run.finish() # wandb run finish
 compute_cleanup()
