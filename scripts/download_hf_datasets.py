@@ -21,6 +21,9 @@ DATASETS = [
     ("HuggingFaceTB/smol-smoltalk", None, ["train", "test"]),
     ("cais/mmlu", "all", ["auxiliary_train", "test"]),
     ("openai/gsm8k", "main", ["train", "test"]),
+    ("allenai/ai2_arc", "ARC-Easy", ["train", "validation", "test"]),
+    ("allenai/ai2_arc", "ARC-Challenge", ["train", "validation", "test"]),
+    ("openai/openai_humaneval", None, ["test"]),
 ]
 
 def main():
@@ -31,9 +34,13 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     for repo_id, subset, splits in DATASETS:
-        # e.g. "smol-smoltalk", "mmlu", "gsm8k"
+        # e.g. "smol-smoltalk", "mmlu", "gsm8k", "ai2_arc/ARC-Easy"
         name = repo_id.split("/")[-1]
-        save_path = os.path.join(args.output_dir, name)
+        # For datasets with multiple subsets (e.g. ARC), include subset in path
+        if name == "ai2_arc":
+            save_path = os.path.join(args.output_dir, name, subset)
+        else:
+            save_path = os.path.join(args.output_dir, name)
         print(f"Downloading {repo_id} ({subset or 'default'}) -> {save_path}")
 
         for split in splits:

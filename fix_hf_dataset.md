@@ -6,3 +6,12 @@
 
   # 3. 在服务器上重新运行训练
   bash scripts/full_train_a800.sh
+
+---
+  Next steps — on a machine with internet, re-run:
+  python scripts/download_hf_datasets.py --output_dir data/hf_datasets
+  Then re-upload data/hf_datasets/ to the server. The new directories will be:
+  - data/hf_datasets/ai2_arc/ARC-Easy/{train,validation,test}
+  - data/hf_datasets/ai2_arc/ARC-Challenge/{train,validation,test}
+  - data/hf_datasets/openai_humaneval/test
+

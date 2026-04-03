@@ -156,14 +156,14 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
 
 def run_chat_eval(task_name, model, tokenizer, engine,
                    batch_size=1, num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50,
-                   max_problems=None):
+                   max_problems=None, offline_dir=None):
     # Create the evaluation object
     task_module = {
-        'HumanEval': HumanEval,
-        'MMLU': partial(MMLU, subset="all", split="test"),
-        'ARC-Easy': partial(ARC, subset="ARC-Easy", split="test"),
-        'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
-        'GSM8K': partial(GSM8K, subset="main", split="test"),
+        'HumanEval': partial(HumanEval, offline_dir=offline_dir),
+        'MMLU': partial(MMLU, subset="all", split="test", offline_dir=offline_dir),
+        'ARC-Easy': partial(ARC, subset="ARC-Easy", split="test", offline_dir=offline_dir),
+        'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test", offline_dir=offline_dir),
+        'GSM8K': partial(GSM8K, subset="main", split="test", offline_dir=offline_dir),
         'SpellingBee': partial(SpellingBee, size=256, split="test"),
     }[task_name]
     task_object = task_module()
@@ -192,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
     parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
+    parser.add_argument('--offline', type=str, default=None, help='path to local HF datasets dir for offline evaluation')
     args = parser.parse_args()
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
@@ -224,6 +225,7 @@ if __name__ == "__main__":
             temperature=args.temperature,
             top_k=args.top_k,
             max_problems=args.max_problems,
+            offline_dir=args.offline,
         )
         results[task_name] = acc
         print0(f"{task_name} accuracy: {100 * acc:.2f}%")

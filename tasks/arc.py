@@ -3,16 +3,20 @@ The ARC dataset from Allen AI.
 https://huggingface.co/datasets/allenai/ai2_arc
 """
 
-from datasets import load_dataset
+import os
+from datasets import load_dataset, load_from_disk
 from tasks.common import Task, render_mc
 
 class ARC(Task):
 
-    def __init__(self, subset, split, **kwargs):
+    def __init__(self, subset, split, offline_dir=None, **kwargs):
         super().__init__(**kwargs)
         assert subset in ["ARC-Easy", "ARC-Challenge"], "ARC subset must be ARC-Easy or ARC-Challenge"
         assert split in ["train", "validation", "test"], "ARC split must be train|validation|test"
-        self.ds = load_dataset("allenai/ai2_arc", subset, split=split).shuffle(seed=42)
+        if offline_dir:
+            self.ds = load_from_disk(os.path.join(offline_dir, "ai2_arc", subset, split)).shuffle(seed=42)
+        else:
+            self.ds = load_dataset("allenai/ai2_arc", subset, split=split).shuffle(seed=42)
 
     @property
     def eval_type(self):

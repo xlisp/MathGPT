@@ -5,7 +5,8 @@ It is a coding benchmark.
 """
 
 import re
-from datasets import load_dataset
+import os
+from datasets import load_dataset, load_from_disk
 from nanochat.execution import execute_code
 from tasks.common import Task
 
@@ -46,9 +47,12 @@ def extract_program(completion):
 
 class HumanEval(Task):
 
-    def __init__(self, **kwargs):
+    def __init__(self, offline_dir=None, **kwargs):
         super().__init__(**kwargs)
-        self.ds = load_dataset("openai/openai_humaneval", split="test").shuffle(seed=42)
+        if offline_dir:
+            self.ds = load_from_disk(os.path.join(offline_dir, "openai_humaneval", "test")).shuffle(seed=42)
+        else:
+            self.ds = load_dataset("openai/openai_humaneval", split="test").shuffle(seed=42)
 
     @property
     def eval_type(self):

@@ -396,7 +396,8 @@ while True:
             limit = args.chatcore_max_cat if task_name in categorical_tasks else args.chatcore_max_sample
             max_problems = None if limit < 0 else limit  # -1 means no limit
             acc = run_chat_eval(task_name, orig_model, tokenizer, engine,
-                                batch_size=args.device_batch_size, max_problems=max_problems)
+                                batch_size=args.device_batch_size, max_problems=max_problems,
+                                offline_dir=args.offline)
             task_results[task_name] = acc
             print0(f"  {task_name}: {100*acc:.2f}%")
         # Compute ChatCORE metrics (mean centered accuracy, ranges from 0=random to 1=perfect)
