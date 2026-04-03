@@ -42,26 +42,33 @@ if [ ! -f "$NANOCHAT_BASE_DIR/identity_conversations.jsonl" ]; then
         https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 fi
 
-$RUN scripts.tok_train --max-chars=2000000000
+# $RUN scripts.tok_train --max-chars=2000000000 ## --- OK
 
 # ──────────────────────────────────────────────────────────────
 step "3/5  Base 模型预训练（A800 配置，depth=20，~700M 参数，bf16）"
 # 上次: depth=6, seq=256, 3000步 × 8K = 24M tokens → BPB 1.356
 # 本次: depth=20, seq=2048, 5000步 × 524K = 2.6B tokens（提升 ~108x）
-$RUN scripts.base_train \
-    --depth=20 \
-    --head-dim=128 \
-    --window-pattern=SSSL \
-    --max-seq-len=2048 \
-    --device-batch-size=32 \
-    --total-batch-size=524288 \
-    --num-iterations=5000 \
-    --eval-every=500 \
-    --eval-tokens=524288 \
-    --core-metric-every=-1 \
-    --sample-every=1000 \
-    --save-every=1000 \
-    --run=dummy
+# # --- OK
+# 2026-04-03 15:44:06,245 - nanochat.checkpoint_manager - INFO - Saved model parameters to: /mnt/openclaw/MathGPT/runs/base_checkpoints/d20/model_005000.pt
+# 2026-04-03 15:44:06,246 - nanochat.checkpoint_manager - INFO - Saved metadata to: /mnt/openclaw/MathGPT/runs/base_checkpoints/d20/meta_005000.json
+# 2026-04-03 15:44:10,369 - nanochat.checkpoint_manager - INFO - Saved optimizer state to: /mnt/openclaw/MathGPT/runs/base_checkpoints/d20/optim_005000_rank0.pt
+# Peak memory usage: 73600.21MiB
+# Total training time: 893.34m
+# Minimum validation bpb: 0.731515
+# $RUN scripts.base_train \
+#     --depth=20 \
+#     --head-dim=128 \
+#     --window-pattern=SSSL \
+#     --max-seq-len=2048 \
+#     --device-batch-size=32 \
+#     --total-batch-size=524288 \
+#     --num-iterations=5000 \
+#     --eval-every=500 \
+#     --eval-tokens=524288 \
+#     --core-metric-every=-1 \
+#     --sample-every=1000 \
+#     --save-every=1000 \
+#     --run=dummy
 
 # ──────────────────────────────────────────────────────────────
 step "4/5  SFT 微调（对话格式 + 数学工具调用，3000 步）"
