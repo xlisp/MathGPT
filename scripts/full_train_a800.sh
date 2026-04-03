@@ -20,6 +20,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export NANOCHAT_BASE_DIR="$PROJECT_ROOT/runs"
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
+
 RUN="python3 -m scripts.run"
 
 GREEN='\033[0;32m'; NC='\033[0m'
