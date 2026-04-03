@@ -9,7 +9,7 @@ dist/
 build/
 .DS_Store
 wandb/
-words_alpha.txt
-identity_conversations.jsonl 
+runs/words_alpha.txt
+runs/identity_conversations.jsonl 
 data/
 
