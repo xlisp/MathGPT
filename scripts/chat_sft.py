@@ -380,6 +380,8 @@ while True:
             tb_writer.add_scalar("val/bpb", val_bpb, step)
             tb_writer.add_scalar("val/min_bpb", min_val_bpb, step)
         model.train()
+        gc.collect()
+        torch.cuda.empty_cache()
 
     # once in a while: estimate the ChatCORE metric (all ranks participate)
     # use the original uncompiled model because the inputs keep changing shape
@@ -420,6 +422,9 @@ while True:
             tb_writer.add_scalar("eval/chatcore_cat", chatcore_cat, step)
             for task_name, acc in task_results.items():
                 tb_writer.add_scalar(f"eval/{task_name}", acc, step)
+        del engine
+        gc.collect()
+        torch.cuda.empty_cache()
         model.train()
 
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
