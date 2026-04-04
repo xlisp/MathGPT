@@ -296,7 +296,9 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             else:
                 approx_progress = consumed / dataset_size
             # Trigger last_step when we've consumed enough (instead of when cursor wraps)
-            if consumed >= dataset_size:
+            # Only auto-stop on data exhaustion if num_iterations was NOT specified;
+            # otherwise let the training loop continue for multiple epochs.
+            if consumed >= dataset_size and args.num_iterations <= 0:
                 last_step = True
 
         # Build tensors
