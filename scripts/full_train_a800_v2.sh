@@ -69,12 +69,12 @@ else
     OFFLINE_FLAG="--offline=$OFFLINE_DIR"
 fi
 
-# 确认 tokenizer 存在
-TOK_FILE="$NANOCHAT_BASE_DIR/tokenizer.bin"
-if [ ! -f "$TOK_FILE" ]; then
-    error "Tokenizer 不存在: $TOK_FILE\n  请先运行 full_train_a800.sh 的 Tokenizer 训练步骤"
+# 确认 tokenizer 存在 (RustBPE 用 tokenizer.pkl, HuggingFace 用 tokenizer.json)
+TOK_DIR="$NANOCHAT_BASE_DIR/tokenizer"
+if [ ! -d "$TOK_DIR" ]; then
+    error "Tokenizer 目录不存在: $TOK_DIR\n  请先运行 full_train_a800.sh 的 Tokenizer 训练步骤"
 fi
-echo "Tokenizer: $TOK_FILE"
+echo "Tokenizer: $TOK_DIR"
 
 echo -e "\n${GREEN}前置检查通过${NC}"
 
