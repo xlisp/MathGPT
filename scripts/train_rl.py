@@ -308,4 +308,5 @@ if tb_writer is not None:
     tb_writer.close()
 wandb_run.finish()
 compute_cleanup()
+batch_iterator.close()
 print0("MathGPT RL training complete.")
