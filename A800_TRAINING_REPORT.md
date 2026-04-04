@@ -485,3 +485,269 @@ BPB (bits per byte) = loss (nats/token) × bytes_per_token的倒数 × (1/ln2)
 | 磁盘 (checkpoints) | ~10 GB (base 5个 + sft + rl 8个) |
 | 训练 FLOPs (Base) | 7.57 × 10^18 |
 | 总训练 tokens | ~2.6B (base) + ~196M (SFT) + RL |
+
+---
+
+## 十、RL 训练完整复盘：为什么 Step 120 是最优？
+
+### 10.1 核心结论
+
+**RL 训练 699 步中，只有前 120 步（17%）是有效的，剩余 579 步（83%）不仅没有提升，反而导致了模型退化。**
+
+完整 Pass@1 轨迹：
+```
+Step   0: 2.50%  ← SFT 基线
+Step  60: 7.00%  ← 快速上升
+Step 120: 14.00% ← ★ 全局最优
+Step 180: 11.00% ← 开始下降
+Step 240: 12.00%
+Step 300: 12.00%
+Step 360: 12.25%
+Step 420: 10.50%
+Step 480: 14.00% ← 偶尔回升但不稳定
+Step 540: 12.50%
+Step 600: 10.00% ← 明显退化
+Step 660: 12.25% ← 最终评估
+Step 698: (未评估，但 train reward=0.45)
+```
+
+### 10.2 为什么 Step 120 最好？——RL 过拟合的完整分析
+
+**现象**: Train reward 持续上升 (0.07 → 0.45)，但 eval pass@k 在 step 120 后停滞甚至下降。
+
+这是经典的 **RL 过拟合 (policy overfitting)**，原因链如下：
+
+```
+SFT 基础薄弱 (仅 375 步)
+    ↓
+模型起点能力有限 (Pass@1 = 2.5%)
+    ↓
+RL 前期: 低垂果实多，容易学到正确 pattern → Pass@1 快速上升到 14%
+    ↓
+RL 中期: 容易题已学会(reward→1)，难题完全不会(reward→0)
+         → 有效梯度信号的题越来越少
+    ↓
+RL 后期: 模型开始"作弊"——学到的不是推理能力，而是：
+         1. 更短的序列 (222→129 tokens) → 提前生成 <|assistant_end|>
+         2. 训练集特定题目的记忆 → train reward 上升
+         3. 在训练集见过的简单 pattern 上过拟合
+    ↓
+结果: train reward ↑ 但 eval 能力 ↓ (泛化失败)
+```
+
+**数据证据**：
+
+| 指标 | Step 0 | Step 120 (最优) | Step 698 (最终) | 说明 |
+|------|--------|----------------|-----------------|------|
+| Train reward | 0.07 | ~0.21 | **0.45** | 持续上升（过拟合） |
+| Eval Pass@1 | 2.5% | **14.0%** | ~12.3% | 先升后降 |
+| Eval Pass@16 | 29.8% | **38.0%** | 32.8% | 多样性在丢失 |
+| 序列长度 | 222 | ~170 | **129** | 回答越来越短 |
+| LR multiplier | 1.0 | 0.83 | 0.001 | 学习率衰减 |
+
+**Pass@16 下降是关键信号**：从 38% 降到 32.8%，说明模型不是"学得更精准"，而是"探索变少了"(mode collapse)。好的 RL 训练应该 Pass@1 上升的同时 Pass@16 不下降。
+
+### 10.3 实际对话效果验证
+
+用最优 checkpoint (step 120) 和最终 checkpoint (step 698) 分别测试：
+
+| 输入 | Step 120 输出 | Step 698 输出 |
+|------|--------------|---------------|
+| "2x + 5 = 17" | "...2x = 12" (截断，未给最终答案) | "...x = 3" (答案错误，应为 6) |
+| "10 + 10" | 截断 | "To solve the equation 10 + 10 = " (截断) |
+| "10 + 10 = ?" | 截断 | "10 + 10" (截断) |
+
+**两个 checkpoint 都表现不佳**：
+- Step 120: 推理方向正确但提前截断
+- Step 698: 偶尔能给出完整回答但计算错误
+
+**根本原因不在 RL，在 SFT**：模型在 SFT 阶段就没有充分学会"完整地回答问题"这个基本能力。RL 只是在这个薄弱的基础上做微调，无法弥补 SFT 的不足。
+
+### 10.4 学习率衰减与最优点的关系
+
+RL 使用 cosine decay: `lr = initial_lr × (1 - step/699)`
+
+| 阶段 | LR 乘子 | 状态 |
+|------|---------|------|
+| Step 0-120 | 1.0 → 0.83 | 学习率充足，有效学习 |
+| Step 120-350 | 0.83 → 0.50 | 学习率仍可观，但有效样本不足 |
+| Step 350-699 | 0.50 → 0.001 | 学习率太低+过拟合，无法逃出局部最优 |
+
+学习率在 step 120 时仍有 83% 峰值，说明不是"学习率太高导致不稳定"，而是**有效训练信号耗尽**。
+
+---
+
+## 十一、下一步调优方案（按优先级）
+
+### 11.1 最高优先级：重做 SFT（预期收益最大）
+
+**当前瓶颈**: SFT 仅 375 步，是整个 pipeline 最薄弱的环节。
+
+**问题根源**: `total-batch-size=524288` 太大。1.3M 数据行 ÷ 524K = 仅 ~2.5 步/epoch，总共只迭代了 375 步。模型还没学会完整的对话格式和推理链。
+
+**具体方案**:
+
+```bash
+# 降低 batch size → 增加迭代次数
+python3 -m scripts.chat_sft \
+    --total-batch-size=65536 \        # 从 524K 降到 65K
+    --num-iterations=3000 \           # 目标 3000 步
+    --gsm8k-epochs=16 \               # 数学数据翻倍
+    --mmlu-epochs=5 \
+    --offline=data/hf_datasets \
+    --run=sft_v2
+```
+
+**预期效果**:
+- 1.3M rows ÷ 65K batch = ~20 步/epoch → 3000 步 = ~150 epochs 充分迭代
+- SFT 完成后，直接用 `chat_cli --source sft` 测试，应该能给出完整、连贯的回答
+- SFT 后的 GSM8K Pass@1 预期从 12.5% 提升到 **20-25%**（不需要 RL）
+
+### 11.2 次高优先级：优化 RL 训练策略
+
+在 SFT 充分训练后再进行 RL，并做以下改进：
+
+**A. 早停 (Early Stopping)**
+
+当前训练没有早停，导致 83% 的训练量浪费在过拟合上。
+
+```python
+# 在 train_rl.py 中加入早停逻辑
+best_pass1 = 0
+patience = 3  # 连续 3 次 eval 没有提升就停止
+no_improve_count = 0
+
+# 在 eval 之后:
+if pass1 > best_pass1:
+    best_pass1 = pass1
+    no_improve_count = 0
+    save_best_checkpoint()
+else:
+    no_improve_count += 1
+    if no_improve_count >= patience:
+        print("Early stopping triggered")
+        break
+```
+
+**B. KL 散度惩罚（防止 mode collapse）**
+
+当前 RL 没有 KL 约束，模型可以任意偏离 SFT 分布。Pass@16 从 38% 降到 32.8% 就是 mode collapse 的证据。
+
+```python
+# 在 loss 计算中加入 KL 惩罚
+kl_coeff = 0.01
+with torch.no_grad():
+    ref_logp = -ref_model(inputs, targets, loss_reduction='none')
+kl_penalty = (logp - ref_logp).mean()
+loss = -pg_obj + kl_coeff * kl_penalty
+```
+
+需要保留一份 SFT 模型作为 reference model。
+
+**C. 增加采样数 + Reward Shaping**
+
+| 改进 | 当前值 | 建议值 | 原因 |
+|------|--------|--------|------|
+| num_samples | 16 | **32** | 更多采样 → 更多 reward≠0 的题 → 更多有效梯度 |
+| max_new_tokens | 512 | **768** | 避免模型因 token 限制截断回答 |
+| reward | 0/1 二元 | **部分奖励** | 给中间步骤格式正确、使用计算器等行为部分分数 |
+
+```bash
+python3 -m scripts.train_rl \
+    --source sft \
+    --num-samples=32 \
+    --max-new-tokens=768 \
+    --eval-every=30 \           # 更频繁 eval 以便早停
+    --num-epochs=1 \            # 先跑 1 epoch 看效果
+    --offline=data/hf_datasets \
+    --run=rl_v2
+```
+
+**D. 学习率调整**
+
+当前 `init-lr-frac=0.05` + cosine decay 意味着 RL 从 SFT 学习率的 5% 开始，然后一路降到 0。建议：
+
+```bash
+--init-lr-frac=0.02          # 更小的初始 LR，减少初期震荡
+```
+
+或者用恒定小学习率（需改代码），避免 cosine decay 尾部学习率过低。
+
+### 11.3 中期：增加训练数据
+
+| 数据集 | 大小 | 用途 | 获取方式 |
+|--------|------|------|---------|
+| MetaMathQA | 395K rows | 数学 SFT | HuggingFace: meta-math/MetaMathQA |
+| Orca-Math | 200K rows | 数学 SFT | HuggingFace: microsoft/orca-math-word-problems-200k |
+| MATH dataset | 12.5K rows | 更难的数学 RL | HuggingFace: hendrycks/competition_math |
+| NuminaMath-CoT | 860K rows | 带思维链的数学 | HuggingFace: AI-MO/NuminaMath-CoT |
+
+加入这些数据后重新 SFT，可以显著提升数学推理的起点能力。
+
+### 11.4 长期：架构和工程改进
+
+| 改进 | 预期效果 | 工作量 |
+|------|---------|--------|
+| 增加 Base 预训练到 200 shards (~15B tokens) | BPB 0.73 → ~0.55 | 需 ~30h GPU |
+| 添加 gradient checkpointing | 可增大 RL batch size | 改几行代码 |
+| 多卡并行 RL (2-4× A800) | RL 训练速度 2-4x | torchrun 配置 |
+| 实现 PPO 替代 REINFORCE | 更稳定的 RL 训练 | 中等代码量 |
+
+### 11.5 推荐的完整重训命令
+
+```bash
+# === Phase 1: 重做 SFT (最关键) ===
+python3 -m scripts.chat_sft \
+    --total-batch-size=65536 \
+    --num-iterations=3000 \
+    --gsm8k-epochs=16 \
+    --mmlu-epochs=5 \
+    --offline=data/hf_datasets \
+    --run=sft_v2
+
+# 先测试 SFT 效果
+NANOCHAT_BASE_DIR=./runs python3 -m scripts.chat_cli --source sft
+
+# SFT 评估
+NANOCHAT_BASE_DIR=./runs python3 -m scripts.eval_report --source sft --quick --offline data/hf_datasets
+
+# === Phase 2: RL (在 SFT 效果确认后) ===
+python3 -m scripts.train_rl \
+    --source sft \
+    --num-epochs=1 \
+    --num-samples=32 \
+    --max-new-tokens=768 \
+    --eval-every=30 \
+    --save-every=30 \
+    --examples-per-step=32 \
+    --init-lr-frac=0.02 \
+    --offline=data/hf_datasets \
+    --run=rl_v2
+
+# RL 评估 (对比所有 checkpoint)
+NANOCHAT_BASE_DIR=./runs python3 -m scripts.eval_report --all-steps --offline data/hf_datasets
+```
+
+**预期最终效果**: SFT 充分训练后 Pass@1 ~20-25%，再经过有早停的 RL → Pass@1 **30-40%**，对话时能给出完整且正确的数学推理。
+
+---
+
+## 十二、经验总结
+
+### 12.1 关键教训
+
+1. **SFT 是 RL 的地基** — RL 无法弥补 SFT 的不足。375 步 SFT 是本轮训练效果不佳的根本原因
+2. **RL 需要早停** — 不加监控的 RL 训练会过拟合。train reward 上升 ≠ 模型变好
+3. **batch size 不是越大越好** — SFT 阶段 524K 的 batch size 导致数据只迭代了极少次数
+4. **eval 频率要够高** — 每 60 步 eval 一次仍然太少，可能错过了 step 90-120 之间的真正最优点
+5. **Pass@16 是过拟合的早期预警** — 当 Pass@16 开始下降而 train reward 仍在上升时，应该停止训练
+
+### 12.2 本轮训练的价值
+
+尽管最终模型效果不理想，本轮训练的核心价值在于：
+
+1. ✅ **完整 pipeline 验证**: Base → SFT → RL → Chat 全流程跑通
+2. ✅ **性能基线建立**: 知道了 700M 模型 + 2.6B tokens 的能力上限在哪里
+3. ✅ **问题定位清晰**: 明确了 SFT 步数不足是首要瓶颈
+4. ✅ **调优方向明确**: 下一轮只需改一个参数 (降 SFT batch size) 就能有质的提升
+5. ✅ **工具链完善**: 评估脚本、TensorBoard 日志、报告生成全部就位
