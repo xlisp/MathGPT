@@ -3,7 +3,11 @@
 自包含的数学推理助手，从零预训练 → SFT 对话微调 → REINFORCE 强化学习（简化版 GRPO）在 GSM8K 数学题上训练。
 nanochat 核心代码已内嵌到本项目，无需外部依赖。
 
+![](./demo.png)
+
 ## 运行环境
+
+* V0 training:
 
 | 组件 | 版本 |
 |------|------|
@@ -11,6 +15,8 @@ nanochat 核心代码已内嵌到本项目，无需外部依赖。
 | PyTorch | 2.3.1+cu118 |
 | GPU | NVIDIA GeForce GTX 1080（8GB VRAM，SM 6.1） |
 | 精度 | float32（GTX 1080 不支持 bfloat16） |
+
+* V1 & V2 training: NVIDIA A800-SXM4-80GB | PyTorch 2.7.1+cu128 | Python 3.11 | bf16
 
 > **兼容性说明**：原始 nanochat 需要 PyTorch ≥ 2.5，本项目已直接在源码中修复：
 > - `F.rms_norm`（PyTorch 2.4+ 才有）→ 手动实现方差归一化
