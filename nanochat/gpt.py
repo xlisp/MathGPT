@@ -24,6 +24,7 @@ from nanochat.optim import MuonAdamW, DistMuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
+from nanochat import debug_hooks as _dh
 
 @dataclass
 class GPTConfig:
@@ -108,8 +109,13 @@ class CausalSelfAttention(nn.Module):
         # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
         if kv_cache is None:
-            # Training: causal attention with optional sliding window
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            if _dh.need_sdpa_fallback():
+                # Debug path: keep attention probabilities for TDB-style inspection.
+                y, probs = _dh.sdpa_with_probs(q, k, v, causal=True, window_size=window_size)
+                _dh.record_attn_probs(self.layer_idx, probs)
+            else:
+                # Training: causal attention with optional sliding window
+                y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
         else:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
@@ -150,6 +156,16 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
+        if _dh.is_active():
+            x_in = x
+            attn_out = self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+            attn_out = _dh.maybe_zero_attn(self.attn.layer_idx, attn_out)
+            x_after_attn = x + attn_out
+            mlp_out = self.mlp(norm(x_after_attn))
+            mlp_out = _dh.maybe_zero_mlp(self.attn.layer_idx, mlp_out)
+            x_after_mlp = x_after_attn + mlp_out
+            _dh.record_block_io(self.attn.layer_idx, x_in, attn_out, x_after_attn, mlp_out, x_after_mlp)
+            return x_after_mlp
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
         x = x + self.mlp(norm(x))
         return x
@@ -469,6 +485,9 @@ class GPT(nn.Module):
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
         logits = softcap * torch.tanh(logits / softcap) # squash the logits
+
+        if _dh.is_active():
+            _dh.record_final(x, logits)
 
         if targets is not None:
             # training: given the targets, compute and return the loss
