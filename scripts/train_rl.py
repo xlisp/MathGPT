@@ -62,6 +62,13 @@ parser.add_argument("--num-samples", type=int, default=16, help="number of rollo
 parser.add_argument("--max-new-tokens", type=int, default=256, help="max tokens to generate per sample")
 parser.add_argument("--temperature", type=float, default=1.0, help="sampling temperature for rollouts")
 parser.add_argument("--top-k", type=int, default=50, help="top-k sampling (0 = disabled)")
+# Agile 改进开关
+parser.add_argument("--grpo-norm", dest="grpo_norm", action="store_true", default=True,
+                    help="GRPO 组内标准化优势 + 跳过退化组（默认开启）")
+parser.add_argument("--no-grpo-norm", dest="grpo_norm", action="store_false",
+                    help="关闭 GRPO 标准化，回退原版 REINFORCE")
+parser.add_argument("--kl-coef", type=float, default=0.0,
+                    help=">0 时对冻结 reference policy 施加 KL 约束，防策略跑飞/退化")
 # Optimization
 parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
@@ -100,6 +107,16 @@ print0(f"Loading {args.source} checkpoint...")
 # Init model and tokenizer — load from SFT or prior RL checkpoint
 model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 engine = Engine(model, tokenizer)
+
+# --- Agile 改进：可选冻结 reference policy，用于 KL 约束（--kl-coef>0 时启用）---
+ref_model = None
+if args.kl_coef > 0.0:
+    ref_model, _, _ = load_model(args.source, device, phase="eval",
+                                 model_tag=args.model_tag, step=args.model_step)
+    for p in ref_model.parameters():
+        p.requires_grad_(False)
+    ref_model.eval()
+    print0(f"KL regularization enabled (kl_coef={args.kl_coef}) against frozen reference policy")
 
 # -----------------------------------------------------------------------------
 # Rollout generator: yields batches of (sequences, inputs, targets, rewards, advantages)
@@ -154,8 +171,18 @@ def get_batch():
         targets = ids[:, 1:].clone()
         targets[mask_ids[:, 1:] == 0] = -1  # ignore prompt tokens in the loss
 
-        rewards    = torch.tensor(rewards, dtype=torch.float, device=device)
-        advantages = rewards - rewards.mean()  # REINFORCE with baseline
+        rewards = torch.tensor(rewards, dtype=torch.float, device=device)
+
+        # --- Agile 改进：GRPO 组内标准化优势（默认开启，--no-grpo-norm 关闭回退 REINFORCE）---
+        if getattr(args, "grpo_norm", True):
+            # adv = (r - mean) / (std + eps)，跨题尺度一致，难题稀有正样本被放大
+            std = rewards.std()
+            if float(std) < 1e-6:
+                # 全对/全错 -> 无学习信号 -> 跳过该题，省算力（DAPO dynamic sampling）
+                continue
+            advantages = (rewards - rewards.mean()) / (std + 1e-4)
+        else:
+            advantages = rewards - rewards.mean()  # 原版 REINFORCE with baseline
 
         yield generated_seqs, inputs, targets, rewards, advantages
 
@@ -256,6 +283,17 @@ for step in range(num_steps):
             num_valid = (targets >= 0).sum().clamp(min=1)
             pg_obj    = pg_obj / (num_valid * num_passes * examples_per_rank)
             loss      = -pg_obj
+
+            # --- Agile 改进：KL 约束（k3 估计量），防策略跑飞/输出退化 ---
+            if ref_model is not None:
+                with torch.no_grad():
+                    logp_ref = -ref_model(inputs, targets, loss_reduction='none').view_as(inputs)
+                kl_mask  = (targets >= 0).float()
+                delta    = logp_ref - logp
+                kl_tok   = (torch.exp(delta) - delta - 1.0) * kl_mask
+                kl_term  = kl_tok.sum() / kl_mask.sum().clamp(min=1)
+                loss     = loss + args.kl_coef * kl_term
+
             loss.backward()
 
             rewards = rewards_all[b0:b1]
