@@ -21,18 +21,48 @@ from tasks.common import Task
 
 
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+
+# --- Agile 改进：鲁棒三级回退抽取（boxed / "answer is" / 末尾数字）---------------
+# 设 MATHGPT_ROBUST_EXTRACT=0 可关闭，回退到官方仅认 "#### 数字" 的行为。
+_BOXED_RE  = re.compile(r"\\boxed\{\s*(-?[0-9\.\,]+)\s*\}")
+_PHRASE_RE = re.compile(r"(?:answer|result|总共|等于|是)\D{0,8}(-?[0-9][0-9\.\,]*)", re.IGNORECASE)
+_NUM_RE    = re.compile(r"-?[0-9][0-9\.\,]*")
+
+def _norm(s):
+    if s is None:
+        return None
+    s = s.strip().replace(",", "").rstrip(".")
+    return s if s not in ("", "-", ".") else None
+
 def extract_answer(completion):
     """
-    Extract the numerical answer after #### marker.
-    Follows official code for normalization:
-    https://github.com/openai/grade-school-math/blob/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/dataset.py#L28
+    Extract the numerical answer. 默认鲁棒模式按优先级回退：
+      #### 数字  ->  \\boxed{数字}  ->  "answer is 数字"  ->  正文最后一个数字
+    返回归一化后的字符串（与原版接口一致）。
     """
     match = GSM_RE.search(completion)
     if match:
-        match_str = match.group(1).strip()
-        match_str = match_str.replace(",", "")
-        return match_str
+        return _norm(match.group(1))
+    if os.environ.get("MATHGPT_ROBUST_EXTRACT", "1") == "0":
+        return None
+    for rgx in (_BOXED_RE, _PHRASE_RE):
+        m = rgx.search(completion)
+        if m and _norm(m.group(1)) is not None:
+            return _norm(m.group(1))
+    nums = _NUM_RE.findall(completion)
+    for tok in reversed(nums):
+        if _norm(tok) is not None:
+            return _norm(tok)
     return None
+
+def _num_equal(a, b):
+    """数值等价：10 / 10.0 / 10.00 视为相等。"""
+    if a is None or b is None:
+        return False
+    try:
+        return float(a) == float(b)
+    except ValueError:
+        return a == b
 
 
 class GSM8K(Task):
@@ -107,15 +137,23 @@ class GSM8K(Task):
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
-        # Compare and return the success as int
-        is_correct = int(pred_num == ref_num)
+        # Compare and return the success as int (数值等价比较，避免 10 vs 10.0 假错)
+        is_correct = int(_num_equal(pred_num, ref_num))
         return is_correct
 
     def reward(self, conversation, assistant_response):
         """
-        Used during RL. To keep things simple, just re-use the evaluation above.
-        Later this could be made more complex (e.g. format matching etc.)
+        Used during RL. 默认仍返回 0/1 正确性（与原版一致）。
+        设 MATHGPT_SHAPED_REWARD=1 开启奖励整形：在正确性之外，对
+        "格式合法 / 调用计算器" 给少量正奖励，缓解 0/1 稀疏信号。
+        shaping 总量 ≤0.1，绝不盖过正确性主项，避免 reward hacking。
         """
-        is_correct = self.evaluate(conversation, assistant_response)
-        is_correct_float = float(is_correct)
-        return is_correct_float
+        is_correct = float(self.evaluate(conversation, assistant_response))
+        if os.environ.get("MATHGPT_SHAPED_REWARD", "0") != "1":
+            return is_correct
+        bonus = 0.0
+        if "####" in assistant_response or "\\boxed" in assistant_response:
+            bonus += 0.05  # 产出了清晰的最终答案
+        if re.search(r"<<[^>]+>>|<\|python_start\|>", assistant_response):
+            bonus += 0.05  # 使用了计算器工具
+        return is_correct + bonus
